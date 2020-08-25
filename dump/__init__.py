@@ -105,10 +105,11 @@ def __dump_opened_files(zip_archive, client_root, opened_files):
 def __get_client_file(client_root, client_file):
     pattern = ''.join(['//', cfg.arguments.p4_client, '/'])
 
-    return client_file.replace(pattern, ''.join([client_root, '/']))
+    return (client_file.replace(pattern, ''.join([client_root, '/'])),
+            client_file.replace(pattern, ''))
 
-def __dump_opened_files_added(zip_archive, depot_file, client_file):
-    file_name = os.path.basename(client_file)
+def __dump_opened_files_added(zip_archive, depot_file, client_files):
+    client_file, file_name = client_files
 
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(bytearray(''.join(['--- ', depot_file, '\n']), 'utf-8'))
@@ -121,9 +122,9 @@ def __dump_opened_files_added(zip_archive, depot_file, client_file):
                 z_file.write(bytearray(''.join(['+ ', line]), 'utf-8'))
                 line = f.readline()
 
-def __dump_opened_files_diff(zip_archive, depot_file, client_file):
+def __dump_opened_files_diff(zip_archive, depot_file, client_files):
     diff_content = p4.run_p4(['diff', '-du3', '-f', '-Od', '-t', depot_file], False).stdout
-    file_name = os.path.basename(client_file)
+    client_file, file_name = client_files
 
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(diff_content)
