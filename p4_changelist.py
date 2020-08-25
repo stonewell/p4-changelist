@@ -22,15 +22,15 @@ def args_parser():
 
     dump_parser = sub_parsers.add_parser('dump', help='dump p4 change list')
     dump_parser.add_argument('-C', '--p4-changelist', type=str, help='p4 change list to dump', required=False, default='default')
-    dump_parser.add_argument('-d', '--output_dir', type=str, help='dump change list to directory, default to current directory', required=False, default='.')
-    dump_parser.add_argument('--use_shelved', action='store_true', help='dump change list shelved version', required=False)
-    dump_parser.add_argument('-o', '--output_file', type=str, help='dump change list archive file name, default will be <change list number>.p4c', required=False)
+    dump_parser.add_argument('-d', '--output-dir', type=str, help='dump change list to directory, default to current directory', required=False, default='.')
+    dump_parser.add_argument('--use-shelved', action='store_true', help='dump change list shelved version', required=False)
+    dump_parser.add_argument('-o', '--output-file', type=str, help='dump change list archive file name, default will be <change list number>.p4c', required=False)
 
     apply_parser = sub_parsers.add_parser('apply', help='apply p4 change list')
-    apply_parser.add_argument('-i', '--input_path', type=str, help='change list archive file path', required=True)
+    apply_parser.add_argument('-i', '--input-path', type=str, help='change list archive file path', required=True)
 
     view_parser = sub_parsers.add_parser('view', help='view p4 change list')
-    view_parser.add_argument('-i', '--input_path', type=str, help='change list archive file path', required=True)
+    view_parser.add_argument('-i', '--input-path', type=str, help='change list archive file path', required=True)
     return parser
 
 if __name__ == '__main__':
