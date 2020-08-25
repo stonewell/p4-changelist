@@ -8,6 +8,8 @@ import p4
 import marshal
 import io
 import zipfile
+import datetime
+from dateutil.tz import tzlocal
 
 
 def __unmarshal_result(data):
@@ -81,9 +83,6 @@ def __get_archive_path():
                         cfg.arguments.output_file if cfg.arguments.output_file else (cfg.arguments.p4_changelist + ".zip"))
 
 def __dump_opened_files(zip_archive, client_root, opened_files):
-    edit_files = []
-    add_files = []
-
     for opened_file in opened_files:
         if not b'action' in opened_file:
             logging.warn("opened file without action found:%s", opened_file)
@@ -112,8 +111,16 @@ def __dump_opened_files_added(zip_archive, depot_file, client_files):
     client_file, file_name = client_files
 
     with zip_archive.open(file_name, 'w') as z_file:
-        z_file.write(bytearray(''.join(['--- ', depot_file, '\n']), 'utf-8'))
-        z_file.write(bytearray(''.join(['+++ ', client_file, '\n']), 'utf-8'))
+        z_file.write(bytearray(''.join(['--- ', file_name, ' ',
+                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
+                                        '\n']),
+                               'utf-8'))
+        z_file.write(bytearray(''.join(['+++ ', file_name, ' ',
+                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
+                                        '\n']),
+                               'utf-8'))
 
         with open(client_file) as f:
             line = f.readline()
@@ -126,8 +133,29 @@ def __dump_opened_files_diff(zip_archive, depot_file, client_files):
     diff_content = p4.run_p4(['diff', '-du3', '-f', '-Od', '-t', depot_file], False).stdout
     client_file, file_name = client_files
 
+    # normalize the diff
+    contents = [
+        ''.join(['--- ', file_name, ' ',
+                 datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                            "%Y-%m-%d %H:%M:%S.%f %z"),
+                 '\n']),
+        ''.join(['+++ ', file_name, ' ',
+                 datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                            "%Y-%m-%d %H:%M:%S.%f %z"),
+                 '\n'])
+    ]
+
+    with io.BytesIO(diff_content) as f:
+        line = f.readline().decode('utf-8')
+
+        while line:
+            if not (line.startswith('--- ') or line.startswith('+++ ')):
+                contents.append(line)
+
+            line = f.readline().decode('utf-8')
+
     with zip_archive.open(file_name, 'w') as z_file:
-        z_file.write(diff_content)
+        z_file.write(bytearray(''.join(contents), 'utf-8'))
 
 def __dump_describe_files(zip_archive, client_root, describe_file):
     pass
