@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import re
 
 import p4_changelist_cfg as cfg
 import p4
@@ -50,6 +51,7 @@ def __dump_changelist(zip_archive):
         sys.exit(3)
 
     root = workspace[0][b'Root'].decode('utf-8')
+    view_map = __get_view_map(workspace[0])
 
     logging.debug('process root %s for client %s', root, cfg.arguments.p4_client)
 
@@ -57,7 +59,7 @@ def __dump_changelist(zip_archive):
         opened_files = __unmarshal_result(p4.run_p4(['opened', '-c', cfg.arguments.p4_changelist]).stdout)
 
         if len(opened_files) > 0:
-            __dump_opened_files(zip_archive, root, opened_files)
+            __dump_opened_files(zip_archive, (root, view_map), opened_files)
         else:
             logging.info("no file to dump for default change list");
     else:
@@ -65,7 +67,7 @@ def __dump_changelist(zip_archive):
             opened_files = __unmarshal_result(p4.run_p4(['opened', '-c', cfg.arguments.p4_changelist]).stdout)
 
             if len(opened_files) > 0:
-                __dump_opened_files(zip_archive, root, opened_files)
+                __dump_opened_files(zip_archive, (root, view_map), opened_files)
             else:
                 logging.info("no file to dump for change list:%s", cfg.arguments.p4_changelist);
 
@@ -79,7 +81,7 @@ def __dump_changelist(zip_archive):
                                                          ]).stdout)
 
             if b'depotFile0' in opened_files[0]:
-                __dump_describe_files(zip_archive, root, opened_files[0])
+                __dump_describe_files(zip_archive, (root, view_map), opened_files[0])
             else:
                 logging.info("no file to dump for changelist:%s", cfg.arguments.p4_changelist)
 
@@ -87,7 +89,9 @@ def __get_archive_path():
     return os.path.join(cfg.arguments.output_dir,
                         cfg.arguments.output_file if cfg.arguments.output_file else (cfg.arguments.p4_changelist + ".zip"))
 
-def __dump_opened_files(zip_archive, client_root, opened_files):
+def __dump_opened_files(zip_archive, client_workspace, opened_files):
+    client_root, _ = client_workspace
+
     for opened_file in opened_files:
         if not b'action' in opened_file:
             logging.warn("opened file without action found:%s", opened_file)
@@ -162,27 +166,124 @@ def __dump_opened_files_diff(zip_archive, depot_file, client_files):
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(bytearray(''.join(contents), 'utf-8'))
 
-def __dump_describe_files(zip_archive, client_root, describe_file):
+def __dump_describe_files(zip_archive, client_workspace, describe_file):
     file_index = 0
 
     #find out added files
     added_files = []
 
     while True:
-        depot_file = 'depotFile{}'.format(file_index)
-        action = 'action{}'.format(file_index)
+        depot_file = bytes('depotFile{}'.format(file_index), 'utf-8')
+        action = bytes('action{}'.format(file_index), 'utf-8')
 
         if not (depot_file in describe_file and action in describe_file):
             break
 
-        added_files.append(describe_file[depot_file])
+        if describe_file[action] == b'add':
+            added_files.append(describe_file[depot_file])
         file_index += 1
 
     # process added files
     if len(added_files) > 0:
         for added_file in added_files:
-            __dump_describe_added_file(zip_archive, client_root, added_file)
+            __dump_describe_added_file(zip_archive, client_workspace, added_file)
 
     # dump edit files
     diff_content = p4.run_p4(['describe', '-du3', '-S', cfg.arguments.p4_changelist], False).stdout
-    print(diff_content.decode('utf-8'))
+    __save_diff_content(zip_archive, client_workspace, diff_content)
+
+def __get_view_map(workspace):
+    view_index = 0
+
+    view_map = {}
+
+    pattern = ''.join(['//', cfg.arguments.p4_client, '/'])
+
+    while True:
+        key = bytes('View{}'.format(view_index), 'utf-8')
+
+        if not key in workspace:
+            break
+
+        mapping = workspace[key].decode('utf-8')
+
+        parts = mapping.split(pattern)
+
+        if not parts[0].startswith('-'):
+            view_map[parts[0].strip()] = parts[1].strip()
+        view_index += 1
+
+    return view_map
+
+def __save_diff_content(zip_archive, client_workspace, diff_content):
+    z_file = None
+    _, view_map = client_workspace
+
+    with io.BytesIO(diff_content) as f:
+        line = f.readline().decode('utf-8')
+
+        while line:
+            if line.startswith('==== //depot/'):
+                file_name = __get_file_name(view_map, line)
+
+                if z_file:
+                    z_file.close()
+                z_file = zip_archive.open(file_name, 'w')
+            elif z_file:
+                z_file.write(bytearray(line, 'utf-8'))
+
+            line = f.readline().decode('utf-8')
+
+def __get_file_name(view_map, line):
+    depot_file = line
+
+    try:
+        end = line.index('#')
+
+        depot_file = line[len('==== '):end]
+    except:
+        pass
+
+    for depot_prefix in view_map:
+        if depot_file == depot_prefix:
+            return view_map[depot_prefix]
+
+        pattern = depot_prefix.replace('...', '(.*)')
+        repl_str = view_map[depot_prefix].replace('...', '\\1')
+
+        logging.debug("try replace pattern:%s, for %s", pattern, depot_file)
+        file_name, count = re.subn(pattern, repl_str , depot_file, flags=re.IGNORECASE)
+
+        if count > 0:
+            logging.debug("try replace pattern:%s, for %s, result:%s", pattern, depot_file, file_name)
+            return file_name
+
+    raise ValueError(' '.join([depot_file, 'not found in view map']))
+
+def __dump_describe_added_file(zip_archive, client_workspace, added_file):
+    _, view_map = client_workspace
+
+    added_file = added_file.decode('utf-8')
+    depot_file_with_rev = ''.join([added_file, '@=', cfg.arguments.p4_changelist])
+    file_content = p4.run_p4(['print', depot_file_with_rev], False).stdout
+
+    file_name = __get_file_name(view_map, added_file)
+
+    with zip_archive.open(file_name, 'w') as z_file:
+        z_file.write(bytearray(''.join(['--- ', file_name, ' ',
+                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
+                                        '\n']),
+                               'utf-8'))
+        z_file.write(bytearray(''.join(['+++ ', file_name, ' ',
+                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
+                                        '\n']),
+                               'utf-8'))
+
+        with io.BytesIO(file_content) as f:
+            line = f.readline().decode('utf-8')
+
+            while line:
+                z_file.write(bytearray(''.join(['+ ', line]), 'utf-8'))
+                line = f.readline().decode('utf-8')
