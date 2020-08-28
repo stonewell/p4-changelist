@@ -4,6 +4,7 @@ import logging
 import re
 
 import p4_changelist_cfg as cfg
+import p4_changelist_utils as p4cl_utils
 import p4
 
 import marshal
@@ -12,18 +13,6 @@ import zipfile
 import datetime
 from dateutil.tz import tzlocal
 
-
-def __unmarshal_result(data):
-    results = []
-
-    with io.BytesIO(data) as f:
-        try:
-            while True:
-                results.append(marshal.load(f))
-        except:
-            pass
-
-    return results
 
 def dump_changelist():
     logging.debug('dump change list:%s', cfg.arguments.p4_changelist)
@@ -35,53 +24,48 @@ def dump_changelist():
 
     archive_path = __get_archive_path()
 
-    with zipfile.ZipFile(archive_path, 'w') as zip_archive:
-        __dump_changelist(zip_archive)
+    try:
+        with zipfile.ZipFile(archive_path, 'w') as zip_archive:
+            __dump_changelist(zip_archive)
+    except:
+        os.remove(archive_path)
+        raise
 
 def __dump_changelist(zip_archive):
-    # get workspace root
-    workspace = __unmarshal_result(p4.run_p4(['client', '-o', cfg.arguments.p4_client]).stdout)
+    workspace = p4cl_utils.get_workspace()
 
-    if len(workspace) < 1:
-        logging.error('unknown p4 client:%s', cfg.arguments.p4_client)
-        sys.exit(2)
-
-    if not b'Root' in workspace[0]:
-        logging.error('unknown root for p4 client:%s', cfg.arguments.p4_client)
-        sys.exit(3)
-
-    root = workspace[0][b'Root'].decode('utf-8')
-    view_map = __get_view_map(workspace[0])
-
-    logging.debug('process root %s for client %s', root, cfg.arguments.p4_client)
+    logging.debug('process root %s for client %s', workspace.root, cfg.arguments.p4_client)
 
     if cfg.arguments.p4_changelist == 'default':
-        opened_files = __unmarshal_result(p4.run_p4(['opened', '-c', cfg.arguments.p4_changelist]).stdout)
+        opened_files = p4cl_utils.unmarshal_result(p4.run_p4(['opened', '-c', cfg.arguments.p4_changelist]).stdout)
 
         if len(opened_files) > 0:
-            __dump_opened_files(zip_archive, (root, view_map), opened_files)
+            __dump_opened_files(zip_archive, workspace, opened_files)
         else:
             logging.info("no file to dump for default change list");
     else:
         if not cfg.arguments.use_shelved:
-            opened_files = __unmarshal_result(p4.run_p4(['opened', '-c', cfg.arguments.p4_changelist]).stdout)
+            opened_files = p4cl_utils.unmarshal_result(p4.run_p4(['opened', '-c', cfg.arguments.p4_changelist]).stdout)
 
             if len(opened_files) > 0:
-                __dump_opened_files(zip_archive, (root, view_map), opened_files)
+                __dump_changelist_desription(zip_archive, False)
+                __dump_opened_files(zip_archive, workspace, opened_files)
             else:
                 logging.info("no file to dump for change list:%s", cfg.arguments.p4_changelist);
 
         # try shelved files
         if cfg.arguments.use_shelved or len(opened_files) == 0:
+            __dump_changelist_desription(zip_archive, True)
+
             logging.debug("process shelved files for changelist:%s", cfg.arguments.p4_changelist)
-            opened_files = __unmarshal_result(p4.run_p4(['describe',
+            opened_files = p4cl_utils.unmarshal_result(p4.run_p4(['describe',
                                                          '-s',
                                                          '-S',
                                                          cfg.arguments.p4_changelist
                                                          ]).stdout)
 
             if b'depotFile0' in opened_files[0]:
-                __dump_describe_files(zip_archive, (root, view_map), opened_files[0])
+                __dump_describe_files(zip_archive, workspace, opened_files[0])
             else:
                 logging.info("no file to dump for changelist:%s", cfg.arguments.p4_changelist)
 
@@ -90,7 +74,7 @@ def __get_archive_path():
                         cfg.arguments.output_file if cfg.arguments.output_file else (cfg.arguments.p4_changelist + ".zip"))
 
 def __dump_opened_files(zip_archive, client_workspace, opened_files):
-    client_root, _ = client_workspace
+    client_root = client_workspace.root
 
     for opened_file in opened_files:
         if not b'action' in opened_file:
@@ -102,19 +86,13 @@ def __dump_opened_files(zip_archive, client_workspace, opened_files):
         if opened_file[b'action'] == b'add':
             __dump_opened_files_added(zip_archive,
                                       opened_file[b'depotFile'].decode('utf-8'),
-                                      __get_client_file(client_root,
+                                      p4cl_utils.get_client_file(client_root,
                                                         opened_file[b'clientFile'].decode('utf-8')))
         else:
             __dump_opened_files_diff(zip_archive,
                                      opened_file[b'depotFile'].decode('utf-8'),
-                                     __get_client_file(client_root,
+                                     p4cl_utils.get_client_file(client_root,
                                                        opened_file[b'clientFile'].decode('utf-8')))
-
-def __get_client_file(client_root, client_file):
-    pattern = ''.join(['//', cfg.arguments.p4_client, '/'])
-
-    return (client_file.replace(pattern, ''.join([client_root, '/'])),
-            client_file.replace(pattern, ''))
 
 def __dump_opened_files_added(zip_archive, depot_file, client_files):
     client_file, file_name = client_files
@@ -192,39 +170,16 @@ def __dump_describe_files(zip_archive, client_workspace, describe_file):
     diff_content = p4.run_p4(['describe', '-du3', '-S', cfg.arguments.p4_changelist], False).stdout
     __save_diff_content(zip_archive, client_workspace, diff_content)
 
-def __get_view_map(workspace):
-    view_index = 0
-
-    view_map = {}
-
-    pattern = ''.join(['//', cfg.arguments.p4_client, '/'])
-
-    while True:
-        key = bytes('View{}'.format(view_index), 'utf-8')
-
-        if not key in workspace:
-            break
-
-        mapping = workspace[key].decode('utf-8')
-
-        parts = mapping.split(pattern)
-
-        if not parts[0].startswith('-'):
-            view_map[parts[0].strip()] = parts[1].strip()
-        view_index += 1
-
-    return view_map
-
 def __save_diff_content(zip_archive, client_workspace, diff_content):
     z_file = None
-    _, view_map = client_workspace
+    view_map = client_workspace.view_map
 
     with io.BytesIO(diff_content) as f:
         line = f.readline().decode('utf-8')
 
         while line:
             if line.startswith('==== //depot/'):
-                file_name = __get_file_name(view_map, line)
+                file_name = p4cl_utils.get_view_mapped_file_name(view_map, line)
 
                 if z_file:
                     z_file.close()
@@ -234,40 +189,14 @@ def __save_diff_content(zip_archive, client_workspace, diff_content):
 
             line = f.readline().decode('utf-8')
 
-def __get_file_name(view_map, line):
-    depot_file = line
-
-    try:
-        end = line.index('#')
-
-        depot_file = line[len('==== '):end]
-    except:
-        pass
-
-    for depot_prefix in view_map:
-        if depot_file == depot_prefix:
-            return view_map[depot_prefix]
-
-        pattern = depot_prefix.replace('...', '(.*)')
-        repl_str = view_map[depot_prefix].replace('...', '\\1')
-
-        logging.debug("try replace pattern:%s, for %s", pattern, depot_file)
-        file_name, count = re.subn(pattern, repl_str , depot_file, flags=re.IGNORECASE)
-
-        if count > 0:
-            logging.debug("try replace pattern:%s, for %s, result:%s", pattern, depot_file, file_name)
-            return file_name
-
-    raise ValueError(' '.join([depot_file, 'not found in view map']))
-
 def __dump_describe_added_file(zip_archive, client_workspace, added_file):
-    _, view_map = client_workspace
+    view_map = client_workspace.view_map
 
     added_file = added_file.decode('utf-8')
     depot_file_with_rev = ''.join([added_file, '@=', cfg.arguments.p4_changelist])
     file_content = p4.run_p4(['print', depot_file_with_rev], False).stdout
 
-    file_name = __get_file_name(view_map, added_file)
+    file_name = p4cl_utils.get_view_mapped_file_name(view_map, added_file)
 
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(bytearray(''.join(['--- ', file_name, ' ',
@@ -287,3 +216,15 @@ def __dump_describe_added_file(zip_archive, client_workspace, added_file):
             while line:
                 z_file.write(bytearray(''.join(['+ ', line]), 'utf-8'))
                 line = f.readline().decode('utf-8')
+
+def __dump_changelist_desription(zip_archive, use_shelved):
+    content = p4.run_p4(['describe',
+                         '-s',
+                         '-S' if use_shelved else '',
+                         cfg.arguments.p4_changelist
+                         ], False).stdout
+
+    file_name = '{}_description.txt'.format(cfg.arguments.p4_changelist)
+
+    with zip_archive.open(file_name, 'w') as z_file:
+        z_file.write(content)

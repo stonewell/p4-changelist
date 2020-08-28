@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import p4_changelist_cfg as cfg
+import p4_changelist_utils as p4cl_utils
 
 
 def __add_global_args(args, output_python=True):
@@ -42,11 +43,20 @@ def run_p4(args, output_python=True):
                           timeout=cfg.arguments.timeout)
 
     if cfg.verbose > 1:
-        logging.debug('p4 standard output:[%s]', proc.stdout.decode('utf-8', errors="ignore"))
+        logging.debug('p4 standard output:[%s]', __get_data(proc.stdout, output_python))
 
     if proc.stderr:
-        logging.error("running p4 get error:%s", proc.stderr.decode('utf-8', errors="ignore"))
+        logging.error("running p4 get error:%s", __get_data(proc.stderr, output_python))
+
+    if proc.returncode != 0 and proc.stdout:
+        logging.error("running p4 get error:%s", __get_data(proc.stdout, output_python))
 
     proc.check_returncode()
 
     return proc
+
+def __get_data(data, is_python):
+    if is_python:
+        return p4cl_utils.unmarshal_result(data)[0]
+
+    return data.decode('utf-8', errors='ignore')
