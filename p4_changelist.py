@@ -8,6 +8,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
 
 import p4_changelist_cfg as cfg
 
+
 def args_parser():
     parser = argparse.ArgumentParser(prog='p4-changelist',
                                      description='program to dump p4 change list as archive and apply archived file to p4, view the archived change list')
