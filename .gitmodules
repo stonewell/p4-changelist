@@ -1,0 +1,9 @@
+[submodule "modules/difflibparser"]
+	path = modules/difflibparser
+	url = https://github.com/yebrahim/difflibparser.git
+[submodule "modules/python_difflib_gui"]
+	path = modules/python_difflib_gui
+	url = https://github.com/salsisan/python-difflib-gui.git
+[submodule "modules/python_patch"]
+	path = modules/python_patch
+	url = https://github.com/techtonik/python-patch.git

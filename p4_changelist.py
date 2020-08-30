@@ -1,7 +1,10 @@
+import os
 import argparse
 import sys
 import logging
 import json
+
+sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
 
 import p4_changelist_cfg as cfg
 
