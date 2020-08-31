@@ -51,7 +51,7 @@ def __dump_changelist(zip_archive):
                 __dump_changelist_desription(zip_archive, False)
                 __dump_opened_files(zip_archive, workspace, opened_files)
             else:
-                logging.info("no file to dump for change list:%s", cfg.arguments.p4_changelist);
+                logging.info("no opened file to dump for change list:%s", cfg.arguments.p4_changelist);
 
         # try shelved files
         if cfg.arguments.use_shelved or len(opened_files) == 0:
@@ -67,7 +67,7 @@ def __dump_changelist(zip_archive):
             if b'depotFile0' in opened_files[0]:
                 __dump_describe_files(zip_archive, workspace, opened_files[0])
             else:
-                logging.info("no file to dump for changelist:%s", cfg.arguments.p4_changelist)
+                logging.info("no shelved file to dump for changelist:%s", cfg.arguments.p4_changelist)
 
 def __get_archive_path():
     return os.path.join(cfg.arguments.output_dir,
@@ -91,23 +91,20 @@ def __dump_opened_files(zip_archive, client_workspace, opened_files):
         else:
             __dump_opened_files_diff(zip_archive,
                                      opened_file[b'depotFile'].decode('utf-8'),
+                                     opened_file[b'haveRev'].decode('utf-8'),
                                      p4cl_utils.get_client_file(client_root,
                                                        opened_file[b'clientFile'].decode('utf-8')))
 
 def __dump_opened_files_added(zip_archive, depot_file, client_files):
     client_file, file_name = client_files
 
+    # save source revision
     with zip_archive.open(file_name, 'w') as z_file:
-        z_file.write(bytearray(''.join(['--- ', file_name, ' ',
-                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
-                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
-                                        '\n']),
-                               'utf-8'))
-        z_file.write(bytearray(''.join(['+++ ', file_name, ' ',
-                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
-                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
-                                        '\n']),
-                               'utf-8'))
+        z_file.write(b'')
+
+    # save diff
+    with zip_archive.open(file_name + '.patch', 'w') as z_file:
+        z_file.write(__get_diff_header(file_name))
 
         with open(client_file) as f:
             line = f.readline()
@@ -116,21 +113,18 @@ def __dump_opened_files_added(zip_archive, depot_file, client_files):
                 z_file.write(bytearray(''.join(['+ ', line]), 'utf-8'))
                 line = f.readline()
 
-def __dump_opened_files_diff(zip_archive, depot_file, client_files):
-    diff_content = p4.run_p4(['diff', '-du3', '-f', '-Od', '-t', depot_file], False).stdout
+def __dump_opened_files_diff(zip_archive, depot_file, depot_have_rev, client_files):
     client_file, file_name = client_files
 
+    # save source revision
+    source_content = p4.run_p4(['print', depot_file + "#" + depot_have_rev], False).stdout
+    with zip_archive.open(file_name, 'w') as z_file:
+        z_file.write(source_content)
+
+    # save the diff file
+    diff_content = p4.run_p4(['diff', '-du3', '-f', '-Od', '-t', depot_file], False).stdout
     # normalize the diff
-    contents = [
-        ''.join(['--- ', file_name, ' ',
-                 datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
-                                            "%Y-%m-%d %H:%M:%S.%f %z"),
-                 '\n']),
-        ''.join(['+++ ', file_name, ' ',
-                 datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
-                                            "%Y-%m-%d %H:%M:%S.%f %z"),
-                 '\n'])
-    ]
+    contents = []
 
     with io.BytesIO(diff_content) as f:
         line = f.readline().decode('utf-8')
@@ -141,7 +135,8 @@ def __dump_opened_files_diff(zip_archive, depot_file, client_files):
 
             line = f.readline().decode('utf-8')
 
-    with zip_archive.open(file_name, 'w') as z_file:
+    with zip_archive.open(file_name + ".patch", 'w') as z_file:
+        z_file.write(__get_diff_header(file_name))
         z_file.write(bytearray(''.join(contents), 'utf-8'))
 
 def __dump_describe_files(zip_archive, client_workspace, describe_file):
@@ -183,7 +178,17 @@ def __save_diff_content(zip_archive, client_workspace, diff_content):
 
                 if z_file:
                     z_file.close()
-                z_file = zip_archive.open(file_name, 'w')
+
+                # save the source revision file
+                depot_file_with_rev = line[len('==== ') : line.index(' (')]
+                with zip_archive.open(file_name, 'w') as z_file:
+                    file_content = p4.run_p4(['print', depot_file_with_rev], False).stdout
+                    z_file.write(file_content)
+
+                # open patch file
+                z_file = zip_archive.open(file_name + ".patch", 'w')
+
+                z_file.write(__get_diff_header(file_name))
             elif z_file:
                 z_file.write(bytearray(line, 'utf-8'))
 
@@ -198,17 +203,13 @@ def __dump_describe_added_file(zip_archive, client_workspace, added_file):
 
     file_name = p4cl_utils.get_view_mapped_file_name(view_map, added_file)
 
+    # save source revision
     with zip_archive.open(file_name, 'w') as z_file:
-        z_file.write(bytearray(''.join(['--- ', file_name, ' ',
-                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
-                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
-                                        '\n']),
-                               'utf-8'))
-        z_file.write(bytearray(''.join(['+++ ', file_name, ' ',
-                                        datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
-                                                                   "%Y-%m-%d %H:%M:%S.%f %z"),
-                                        '\n']),
-                               'utf-8'))
+        z_file.write(b'')
+
+    # save new file as diff
+    with zip_archive.open(file_name + ".patch", 'w') as z_file:
+        z_file.write(__get_diff_header(file_name))
 
         with io.BytesIO(file_content) as f:
             line = f.readline().decode('utf-8')
@@ -228,3 +229,17 @@ def __dump_changelist_desription(zip_archive, use_shelved):
 
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(content)
+
+def __get_diff_header(file_name):
+    contents = [
+        ''.join(['--- ', file_name, ' ',
+                 datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                            "%Y-%m-%d %H:%M:%S.%f %z"),
+                 '\n']),
+        ''.join(['+++ ', file_name, ' ',
+                 datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                            "%Y-%m-%d %H:%M:%S.%f %z"),
+                 '\n'])
+    ]
+
+    return bytearray(''.join(contents), 'utf-8')
