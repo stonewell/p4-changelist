@@ -57,6 +57,7 @@ def run_p4(args, output_python=True):
 
 def __get_data(data, is_python):
     if is_python:
-        return p4cl_utils.unmarshal_result(data)[0]
+        unmarshal_data = p4cl_utils.unmarshal_result(data)
+        return unmarshal_data[0] if len(unmarshal_data) > 0 else data
 
     return data.decode('utf-8', errors='ignore')

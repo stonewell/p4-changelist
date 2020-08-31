@@ -56,7 +56,12 @@ def __get_view_map(workspace):
 
         mapping = workspace[key].decode('utf-8')
 
-        parts = mapping.split(pattern)
+        parts = re.split(pattern, mapping, flags=re.IGNORECASE)
+
+        if cfg.verbose > 1:
+            logging.debug("mapping:%s", mapping)
+            logging.debug("pattern:%s", pattern)
+            logging.debug("parts:%s\n\n", parts)
 
         if not parts[0].startswith('-'):
             view_map[parts[0].strip()] = parts[1].strip()
