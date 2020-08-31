@@ -150,6 +150,7 @@ class P4CLMainWindow:
                                                           'end',
                                                           text=f_name,
                                                           open=False,
+                                                          value=(z_info.filename),
                                                           tags=('black', 'simple'))
 
     def __create_parent_dirs(self, dirs_cache, dirs):
