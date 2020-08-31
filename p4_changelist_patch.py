@@ -9,8 +9,8 @@ def apply_to_content(origin_content, diff_content):
     ps = fromstring(diff_content)
 
     if not ps:
-        logging.error("unable to load diff_content:%s", diff_content)
-        raise (None, 1)
+        logging.error("unable to load diff_content:%s", diff_content.decode('utf-8'))
+        return (None, 1)
 
     p = ps.items[0]
 

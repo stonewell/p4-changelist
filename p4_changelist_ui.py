@@ -5,6 +5,8 @@ import zipfile
 
 from difflibparser.difflibparser import *
 from python_difflib_gui.ui.mainwindow_ui import MainWindowUI
+from p4_changelist_patch import apply_to_content
+
 
 class P4CLMainWindow:
     def start(self, changeListFile = None):
@@ -29,8 +31,10 @@ class P4CLMainWindow:
             {'separator'},
             {'name': 'Exit', 'command': self.exit}
             ])
+        self.__main_window_ui.fileTreeView.column("#0", stretch=False, width=250, minwidth=150)
         self.__main_window_ui.fileTreeView.bind('<<TreeviewSelect>>', lambda *x:self.__treeViewItemSelected())
 
+        self.changeListFile = None
         if changeListFile:
             self.__load_changelist_file(changeListFile)
 
@@ -43,9 +47,6 @@ class P4CLMainWindow:
         if self.leftFile.get() == None or self.rightFile.get() == None:
             self.__main_window_ui.leftFileTextArea.config(background=self.__main_window_ui.grayColor)
             self.__main_window_ui.rightFileTextArea.config(background=self.__main_window_ui.grayColor)
-            return
-
-        if not os.path.exists(self.leftFile.get()) or not os.path.exists(self.rightFile.get()):
             return
 
         self.__main_window_ui.leftFileLabel.config(text=self.leftFile.get())
@@ -62,14 +63,25 @@ class P4CLMainWindow:
         if paths == None or len(paths) == 0:
             return
         self.leftFile.set(paths[0])
-        self.rightFile.set(paths[1])
+        self.rightFile.set(paths[0] + ".patch")
 
     # Insert file contents into text areas and highlight differences
     def __diff_files_into_text_areas(self):
-        leftFileContents = open(self.leftFile.get()).read()
-        rightFileContents = open(self.rightFile.get()).read()
+        if self.rightFile.get() == '' or self.leftFile.get() == '':
+            return
 
-        diff = DifflibParser(leftFileContents.splitlines(), rightFileContents.splitlines())
+        leftFileContents = self.__load_changelist_data(self.leftFile.get())
+        rightFileContents = self.__load_changelist_data(self.rightFile.get())
+
+        rightFileContents, code = apply_to_content(leftFileContents, rightFileContents)
+
+        if not rightFileContents or code != 0:
+            self.__main_window_ui.leftFileTextArea.config(background=self.__main_window_ui.grayColor)
+            self.__main_window_ui.rightFileTextArea.config(background=self.__main_window_ui.grayColor)
+            return
+
+        diff = DifflibParser(leftFileContents.decode('utf-8', errors='ignore').splitlines(),
+                             rightFileContents.decode('utf-8', errors='ignore').splitlines())
 
         # enable text area edits so we can clear and insert into them
         self.__main_window_ui.leftFileTextArea.config(state=NORMAL)
@@ -132,6 +144,10 @@ class P4CLMainWindow:
     def __load_changelist_file(self, changeListFile):
         dirs_cache = {}
 
+        self.changeListFile = changeListFile
+        self.leftFile.set('')
+        self.rightFile.set('')
+
         self.__main_window_ui.fileTreeView.grid()
         self.__main_window_ui.fileTreeYScrollbar.grid()
         self.__main_window_ui.fileTreeXScrollbar.grid()
@@ -169,3 +185,8 @@ class P4CLMainWindow:
         dirs_cache[dirs] = oid
 
         return oid
+
+    def __load_changelist_data(self, file_name):
+        with zipfile.ZipFile(self.changeListFile) as z_archive:
+            with z_archive.open(file_name, 'r') as z_file:
+                return z_file.read()

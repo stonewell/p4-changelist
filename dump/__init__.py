@@ -117,7 +117,7 @@ def __dump_opened_files_diff(zip_archive, depot_file, depot_have_rev, client_fil
     client_file, file_name = client_files
 
     # save source revision
-    source_content = p4.run_p4(['print', depot_file + "#" + depot_have_rev], False).stdout
+    source_content = __p4_print_file_content(depot_file + "#" + depot_have_rev)
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(source_content)
 
@@ -174,6 +174,8 @@ def __save_diff_content(zip_archive, client_workspace, diff_content):
 
         while line:
             if line.startswith('==== //depot/'):
+                # skip empty line
+                f.readline()
                 file_name = p4cl_utils.get_view_mapped_file_name(view_map, line)
 
                 if z_file:
@@ -182,7 +184,7 @@ def __save_diff_content(zip_archive, client_workspace, diff_content):
                 # save the source revision file
                 depot_file_with_rev = line[len('==== ') : line.index(' (')]
                 with zip_archive.open(file_name, 'w') as z_file:
-                    file_content = p4.run_p4(['print', depot_file_with_rev], False).stdout
+                    file_content = __p4_print_file_content(depot_file_with_rev)
                     z_file.write(file_content)
 
                 # open patch file
@@ -199,7 +201,7 @@ def __dump_describe_added_file(zip_archive, client_workspace, added_file):
 
     added_file = added_file.decode('utf-8')
     depot_file_with_rev = ''.join([added_file, '@=', cfg.arguments.p4_changelist])
-    file_content = p4.run_p4(['print', depot_file_with_rev], False).stdout
+    file_content = __p4_print_file_content(depot_file_with_rev)
 
     file_name = p4cl_utils.get_view_mapped_file_name(view_map, added_file)
 
@@ -243,3 +245,11 @@ def __get_diff_header(file_name):
     ]
 
     return bytearray(''.join(contents), 'utf-8')
+
+def __p4_print_file_content(file_name):
+    source_content = p4.run_p4(['print', file_name], False).stdout
+
+    with io.BytesIO(source_content) as f:
+        with io.BytesIO() as d:
+            d.writelines(f.readlines()[1:])
+            return d.getvalue()
