@@ -103,12 +103,21 @@ def __dump_opened_files_added(zip_archive, depot_file, client_files):
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(b'')
 
+    f_time = datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                        "%Y-%m-%d %H:%M:%S.%f %z")
     # save diff
     with zip_archive.open(file_name + '.patch', 'w') as z_file:
         with open(client_file) as f:
-            content = f.read()
+            content = f.readlines()
 
-            z_file.writelines(difflib.unified_diff('', content))
+            diff_content = difflib.unified_diff('',
+                                                content,
+                                                file_name,
+                                                file_name,
+                                                f_time,
+                                                f_time
+                                                )
+            z_file.writelines(map(lambda line:line.encode('utf-8', 'surrogateescape'), diff_content))
 
 def __dump_opened_files_diff(zip_archive, depot_file, depot_have_rev, client_files):
     client_file, file_name = client_files
@@ -127,7 +136,7 @@ def __dump_opened_files_diff(zip_archive, depot_file, depot_have_rev, client_fil
         z_file.write(__get_diff_header(file_name))
 
         with io.BytesIO(diff_content) as f:
-            lines = f.readline()
+            line = f.readline()
 
             while line:
                 if not (line.startswith(b'--- ') or line.startswith(b'+++ ')):
