@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 import re
+import difflib
 
 import p4_changelist_cfg as cfg
 import p4_changelist_utils as p4cl_utils
@@ -104,14 +105,10 @@ def __dump_opened_files_added(zip_archive, depot_file, client_files):
 
     # save diff
     with zip_archive.open(file_name + '.patch', 'w') as z_file:
-        z_file.write(__get_diff_header(file_name))
-
         with open(client_file) as f:
-            line = f.readline()
+            content = f.read()
 
-            while line:
-                z_file.write(bytearray(''.join(['+ ', line]), 'utf-8'))
-                line = f.readline()
+            z_file.writelines(difflib.unified_diff('', content))
 
 def __dump_opened_files_diff(zip_archive, depot_file, depot_have_rev, client_files):
     client_file, file_name = client_files
@@ -126,18 +123,18 @@ def __dump_opened_files_diff(zip_archive, depot_file, depot_have_rev, client_fil
     # normalize the diff
     contents = []
 
-    with io.BytesIO(diff_content) as f:
-        line = f.readline().decode('utf-8')
-
-        while line:
-            if not (line.startswith('--- ') or line.startswith('+++ ')):
-                contents.append(line)
-
-            line = f.readline().decode('utf-8')
-
     with zip_archive.open(file_name + ".patch", 'w') as z_file:
         z_file.write(__get_diff_header(file_name))
-        z_file.write(bytearray(''.join(contents), 'utf-8'))
+
+        with io.BytesIO(diff_content) as f:
+            lines = f.readline()
+
+            while line:
+                if not (line.startswith(b'--- ') or line.startswith(b'+++ ')):
+                    z_file.write(line)
+
+                line = f.readline()
+
 
 def __dump_describe_files(zip_archive, client_workspace, describe_file):
     file_index = 0
@@ -170,12 +167,14 @@ def __save_diff_content(zip_archive, client_workspace, diff_content):
     view_map = client_workspace.view_map
 
     with io.BytesIO(diff_content) as f:
-        line = f.readline().decode('utf-8')
+        line = f.readline()
 
         while line:
-            if line.startswith('==== //depot/'):
+            if line.startswith(b'==== //depot/'):
                 # skip empty line
                 f.readline()
+
+                line = line.decode('utf-8')
                 file_name = p4cl_utils.get_view_mapped_file_name(view_map, line)
 
                 if z_file:
@@ -192,9 +191,9 @@ def __save_diff_content(zip_archive, client_workspace, diff_content):
 
                 z_file.write(__get_diff_header(file_name))
             elif z_file:
-                z_file.write(bytearray(line, 'utf-8'))
+                z_file.write(line)
 
-            line = f.readline().decode('utf-8')
+            line = f.readline()
 
 def __dump_describe_added_file(zip_archive, client_workspace, added_file):
     view_map = client_workspace.view_map
@@ -202,6 +201,7 @@ def __dump_describe_added_file(zip_archive, client_workspace, added_file):
     added_file = added_file.decode('utf-8')
     depot_file_with_rev = ''.join([added_file, '@=', cfg.arguments.p4_changelist])
     file_content = __p4_print_file_content(depot_file_with_rev)
+    file_content = [x + '\n' for x in file_content.decode('utf-8', 'surrogateescape').splitlines()]
 
     file_name = p4cl_utils.get_view_mapped_file_name(view_map, added_file)
 
@@ -209,16 +209,18 @@ def __dump_describe_added_file(zip_archive, client_workspace, added_file):
     with zip_archive.open(file_name, 'w') as z_file:
         z_file.write(b'')
 
+    f_time = datetime.datetime.strftime(datetime.datetime.now(tzlocal()),
+                                        "%Y-%m-%d %H:%M:%S.%f %z")
     # save new file as diff
     with zip_archive.open(file_name + ".patch", 'w') as z_file:
-        z_file.write(__get_diff_header(file_name))
-
-        with io.BytesIO(file_content) as f:
-            line = f.readline().decode('utf-8')
-
-            while line:
-                z_file.write(bytearray(''.join(['+ ', line]), 'utf-8'))
-                line = f.readline().decode('utf-8')
+        diff_content = difflib.unified_diff('',
+                                            file_content,
+                                            file_name,
+                                            file_name,
+                                            f_time,
+                                            f_time
+                                            )
+        z_file.writelines(map(lambda line:line.encode('utf-8', 'surrogateescape'), diff_content))
 
 def __dump_changelist_desription(zip_archive, use_shelved):
     content = p4.run_p4(['describe',
