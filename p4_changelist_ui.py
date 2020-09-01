@@ -34,7 +34,12 @@ class P4CLMainWindow:
         self.__main_window_ui.fileTreeView.column("#0", stretch=False, width=250, minwidth=150)
         self.__main_window_ui.fileTreeView.bind('<<TreeviewSelect>>', lambda *x:self.__treeViewItemSelected())
 
+        self.main_window.bind('<Key>', self.__key_event)
+
         self.changeListFile = None
+        self.cur_diff_index = 0
+        self.diff_index = []
+
         if changeListFile:
             self.__load_changelist_file(changeListFile)
 
@@ -96,6 +101,15 @@ class P4CLMainWindow:
         self.__main_window_ui.rightLinenumbers.delete(1.0, END)
 
         lineno = 1
+        record_lineno = 0
+
+        def save_index(lineno, record_lineno):
+            if record_lineno == 0 or lineno != record_lineno + 1:
+                self.diff_index.append('{}.0'.format(lineno))
+            record_lineno = lineno
+
+            return record_lineno
+
         for line in diff:
             if line['code'] == DiffCode.SIMILAR:
                 self.__main_window_ui.leftFileTextArea.insert('end', line['line'] + '\n')
@@ -103,10 +117,16 @@ class P4CLMainWindow:
             elif line['code'] == DiffCode.RIGHTONLY:
                 self.__main_window_ui.leftFileTextArea.insert('end', '\n', 'gray')
                 self.__main_window_ui.rightFileTextArea.insert('end', line['line'] + '\n', 'green')
+
+                record_lineno = save_index(lineno, record_lineno)
             elif line['code'] == DiffCode.LEFTONLY:
                 self.__main_window_ui.leftFileTextArea.insert('end', line['line'] + '\n', 'red')
                 self.__main_window_ui.rightFileTextArea.insert('end', '\n', 'gray')
+
+                record_lineno = save_index(lineno, record_lineno)
             elif line['code'] == DiffCode.CHANGED:
+                record_lineno = save_index(lineno, record_lineno)
+
                 for (i,c) in enumerate(line['line']):
                     self.__main_window_ui.leftFileTextArea.insert('end', c, 'darkred' if i in line['leftchanges'] else 'red')
                 for (i,c) in enumerate(line['newline']):
@@ -127,6 +147,9 @@ class P4CLMainWindow:
         self.__main_window_ui.rightFileTextArea.config(state=DISABLED)
         self.__main_window_ui.leftLinenumbers.config(state=DISABLED)
         self.__main_window_ui.rightLinenumbers.config(state=DISABLED)
+        self.__main_window_ui.leftFileTextArea.focus_set()
+
+        self.__goto_cur_diff()
 
     def __browse_files(self):
         fname = askopenfilename()
@@ -147,6 +170,8 @@ class P4CLMainWindow:
         self.changeListFile = changeListFile
         self.leftFile.set('')
         self.rightFile.set('')
+        self.cur_diff_index = 0
+        self.diff_index = []
 
         self.__main_window_ui.fileTreeView.grid()
         self.__main_window_ui.fileTreeYScrollbar.grid()
@@ -190,3 +215,20 @@ class P4CLMainWindow:
         with zipfile.ZipFile(self.changeListFile) as z_archive:
             with z_archive.open(file_name, 'r') as z_file:
                 return z_file.read()
+
+    def __key_event(self, event):
+        if len(self.diff_index) == 0:
+            return
+
+        if event.keysym == 'Down':
+            if self.cur_diff_index < len(self.diff_index) - 1:
+                self.cur_diff_index += 1
+            self.__goto_cur_diff()
+        if event.keysym == 'Up':
+            if self.cur_diff_index > 0:
+                self.cur_diff_index -= 1
+            self.__goto_cur_diff()
+
+    def __goto_cur_diff(self):
+        if self.cur_diff_index < len(self.diff_index):
+            self.__main_window_ui.leftFileTextArea.see(self.diff_index[self.cur_diff_index])
